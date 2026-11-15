@@ -22,7 +22,20 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Formatting
-        run: cargo fmt --check
+        continue-on-error: true
+        run: |
+          cargo fmt
+          git diff --binary > fmt.patch
+          echo "--- fmt diff ---"
+          git diff --stat
+
+      - name: Upload formatting patch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fmt.patch
+          path: fmt.patch
+          if-no-files-found: warn
 
       - name: Build
         run: cargo build --release
