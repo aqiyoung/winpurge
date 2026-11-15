@@ -3,6 +3,7 @@ mod engine;
 mod model;
 mod rules;
 mod scan;
+mod treemap;
 mod util;
 mod winapi;
 

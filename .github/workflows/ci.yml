@@ -5,9 +5,16 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
+
+env:
+  # WiX v7 introduced an Open Source Maintenance Fee EULA. v6 is still the
+  # open-source (LGPL) release, so the installer stays buildable for everyone.
+  WIX_VERSION: 6.0.2
 
 jobs:
   build:
@@ -30,6 +37,11 @@ jobs:
       - name: Test
         run: cargo test --release
 
+      # Sign before packaging so the .msi embeds the signed executable.
+      - name: Sign executable
+        shell: pwsh
+        run: ./installer/sign.ps1 -Path target\release\winpurge.exe
+
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
@@ -41,11 +53,14 @@ jobs:
         shell: pwsh
         working-directory: installer
         run: |
-          # WiX v7 introduced an Open Source Maintenance Fee EULA. Stay on v6,
-          # which is still the open-source (LGPL) release.
-          dotnet tool install --global wix --version 6.0.2
+          dotnet tool install --global wix --version $env:WIX_VERSION
           Copy-Item ..\target\release\winpurge.exe .
           wix build winpurge.wxs -o ..\winpurge-ci.msi
+
+      # Best effort: signtool can sign MSIs, the PowerShell fallback cannot.
+      - name: Sign installer
+        shell: pwsh
+        run: ./installer/sign.ps1 -Path winpurge-ci.msi -Optional
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
@@ -63,8 +78,17 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          name: winpurge.exe
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
           name: winpurge.msi
-      - name: Attach installer to release
+          path: dist
+      - name: Name the installer after the tag
+        run: mv dist/winpurge-ci.msi "dist/winpurge-${{ github.ref_name }}.msi"
+      - name: Attach binaries to the release
         uses: softprops/action-gh-release@v2
         with:
-          files: winpurge-ci.msi
+          files: |
+            dist/winpurge.exe
+            dist/winpurge-${{ github.ref_name }}.msi

@@ -51,14 +51,47 @@ conservative:
 | Thumbnail / icon cache | `%LOCALAPPDATA%\Microsoft\Windows\Explorer` | no |
 | Edge / Chrome cache | per-profile `Cache`, `Code Cache`, `GPUCache` | no |
 | Firefox cache | per-profile `cache2` | no |
+| Browser crash reports | Chrome/Edge `User Data\Crashpad`, Firefox `Crash Reports` + `minidumps` | no |
+| Sogou IME log directories | log/crash containers under the per-user `SogouInput` / `SogouPY` trees | no |
+| Sogou IME log files | `*.log` / `*.dmp` directly inside those trees | no |
+| Sogou IME machine logs | log/crash containers under `%PROGRAMDATA%\SogouInput` | yes |
 | Recycle Bin | `$Recycle.Bin` on every volume | no |
 | Windows.old | `%SystemDrive%\Windows.old` | yes |
 
+### What is deliberately *not* cleaned
+
+Sogou stores your personal lexicon, custom phrases and cloud-sync keys in the same
+folders as its caches (`%APData%\SogouInput`, `%LocalAppData%\SogouInput`). Only
+sub-directories whose names mean logs or crash dumps (`SogouLog`, `Logs`,
+`CrashReport`, `CrashDumps`, …) and `*.log` / `*.dmp` files are ever selected —
+your lexicon is left alone.
+
 ## Install
 
-Grab `winpurge.msi` from the [Actions artifacts](https://github.com/aqiyoung/winpurge/actions)
-or from a release. Installing is per-machine and requires administrator rights;
-run WinPurge itself elevated if you want to clean the system-wide categories.
+Download `winpurge-<tag>.msi` (or the portable `winpurge.exe`) from the
+[Releases](https://github.com/aqiyoung/winpurge/releases) page, or grab the
+artifacts from any CI run under **Actions → CI → Artifacts**.
+
+Installing is per-machine and requires administrator rights; run WinPurge itself
+elevated if you want to clean the system-wide categories.
+
+## Code signing
+
+CI signs the executable with a **self-signed** certificate generated on the
+runner (`installer/sign.ps1`). That proves the download was not tampered with and
+gives a stable publisher name, but it does **not** silence the SmartScreen
+warning — SmartScreen only trusts CAs in the Microsoft root store and needs
+reputation built up over time.
+
+To ship a fully trusted build instead, buy an OV/EV code-signing certificate and
+pass the PFX to the same script:
+
+```powershell
+./installer/sign.ps1 -Path target\release\winpurge.exe `
+    -PfxPath C:\certs\winpurge.pfx -PfxPassword <password>
+```
+
+
 
 ## Build
 

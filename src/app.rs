@@ -4,6 +4,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
 use eframe::egui;
+use eframe::egui::epaint::CornerRadius;
 use eframe::egui::{Align, Context, Layout, ProgressBar, RichText, ScrollArea};
 
 use crate::engine::{self, ApplyOutcome, Plan};
@@ -54,6 +55,12 @@ pub struct RuleStatus {
     pub files: u32,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ViewMode {
+    Tree,
+    Treemap,
+}
+
 pub struct WinPurge {
     drives: Vec<DriveInfo>,
     selected_drive: usize,
@@ -67,6 +74,9 @@ pub struct WinPurge {
     scan_depth: usize,
     scanning: bool,
     scanned: u32,
+    view: ViewMode,
+    /// Directory whose children the treemap shows.
+    treemap_root: Option<PathBuf>,
 
     cleaning: bool,
     clean_done: usize,
@@ -103,6 +113,8 @@ impl WinPurge {
             scan_depth: 4,
             scanning: false,
             scanned: 0,
+            view: ViewMode::Treemap,
+            treemap_root: None,
             cleaning: false,
             clean_done: 0,
             clean_total: 0,
@@ -139,6 +151,7 @@ impl WinPurge {
         self.scanned = 0;
         self.tree = None;
         self.selected = None;
+        self.treemap_root = None;
         self.expanded.clear();
         self.push_log(format!("Scanning {} (depth {depth}) ...", root.display()));
 
@@ -346,6 +359,10 @@ impl WinPurge {
                                 );
                             }
                         });
+
+                    ui.label("View");
+                    ui.selectable_value(&mut self.view, ViewMode::Tree, "Tree");
+                    ui.selectable_value(&mut self.view, ViewMode::Treemap, "Treemap");
 
                     ui.separator();
                     ui.add_enabled_ui(!self.scanning && !self.cleaning, |ui| {
@@ -571,19 +588,104 @@ impl WinPurge {
             });
             ui.separator();
 
+            let view = self.view;
             let mut selected_mut = self.selected.clone();
-            // Taken out of `self` so the scroll closure does not borrow the
-            // whole app while `tree` still borrows `self.tree`.
+            let mut treemap_root = self.treemap_root.clone();
+            // Taken out of `self` so the closures below do not borrow the whole
+            // app while `tree` still borrows `self.tree`.
             let mut expanded = std::mem::take(&mut self.expanded);
-            ScrollArea::vertical().show(ui, |ui| {
-                for child in &tree.children {
-                    show_node(ui, child, 0, tree.size, &mut selected_mut, &mut expanded);
+
+            if view == ViewMode::Treemap {
+                let base = treemap_root
+                    .as_ref()
+                    .and_then(|path| find_node(tree, path))
+                    .unwrap_or(tree);
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(base.path.display().to_string()).strong());
+                    ui.label(
+                        RichText::new(format!(
+                            "{} across {} entries",
+                            human_size(base.size),
+                            base.children.len()
+                        ))
+                        .small()
+                        .weak(),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let can_go_up = find_parent(tree, &base.path).is_some();
+                        ui.add_enabled_ui(can_go_up, |ui| {
+                            if ui.button("Up").clicked() {
+                                if let Some(parent) = find_parent(tree, &base.path) {
+                                    treemap_root = Some(parent.path.clone());
+                                    selected_mut = Some(parent.path.clone());
+                                }
+                            }
+                        });
+                        if ui.button("Reset").clicked() {
+                            treemap_root = None;
+                            selected_mut = Some(tree.path.clone());
+                        }
+                    });
+                });
+                ui.separator();
+
+                let (rect, _response) = ui.allocate_exact_size(
+                    egui::Vec2::new(ui.available_width(), ui.available_height()),
+                    egui::Sense::hover(),
+                );
+
+                let bounds =
+                    crate::treemap::Box::new(rect.min.x, rect.min.y, rect.width(), rect.height());
+
+                let mut shown: Vec<&Node> = base.children.iter().filter(|c| c.size > 0).collect();
+                shown.sort_by(|a, b| b.size.cmp(&a.size));
+                shown.truncate(80);
+                let items: Vec<(String, u64)> =
+                    shown.iter().map(|c| (c.name.clone(), c.size)).collect();
+                let boxes = crate::treemap::layout(&items, bounds);
+
+                let painter = ui.painter();
+                for (index, b) in boxes.iter().enumerate() {
+                    let r = egui::Rect::new(egui::Pos2::new(b.x, b.y), egui::Vec2::new(b.w, b.h));
+                    painter.rect_filled(r, CornerRadius::ZERO, palette(index));
+
+                    let response = ui.interact(
+                        r,
+                        egui::Id::new("winpurge-treemap").with(index),
+                        egui::Sense::click(),
+                    );
+                    if response.clicked() {
+                        if let Some(node) = shown.get(index) {
+                            if node.is_dir() {
+                                treemap_root = Some(node.path.clone());
+                                selected_mut = Some(node.path.clone());
+                            }
+                        }
+                    }
+
+                    if b.w > 70.0 && b.h > 26.0 {
+                        let font = (b.h.min(b.w) * 0.16).clamp(9.0, 18.0);
+                        painter.text(
+                            egui::Pos2::new(b.x + b.w / 2.0, b.y + b.h / 2.0),
+                            egui::Align2::CENTER_CENTER,
+                            shown[index].name.clone(),
+                            egui::FontId::proportional(font),
+                            egui::Color32::WHITE,
+                        );
+                    }
                 }
-            });
-            self.expanded = expanded;
-            if selected_mut != self.selected {
-                self.selected = selected_mut;
+            } else {
+                ScrollArea::vertical().show(ui, |ui| {
+                    for child in &tree.children {
+                        show_node(ui, child, 0, tree.size, &mut selected_mut, &mut expanded);
+                    }
+                });
             }
+
+            self.expanded = expanded;
+            self.selected = selected_mut;
+            self.treemap_root = treemap_root;
         });
     }
 
@@ -779,4 +881,47 @@ fn find_size(node: &Node, target: &PathBuf) -> Option<u64> {
         }
     }
     None
+}
+
+fn find_node<'a>(node: &'a Node, target: &Path) -> Option<&'a Node> {
+    if node.path.as_path() == target {
+        return Some(node);
+    }
+    for child in &node.children {
+        if let Some(found) = find_node(child, target) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_parent<'a>(node: &'a Node, target: &Path) -> Option<&'a Node> {
+    for child in &node.children {
+        if child.path.as_path() == target {
+            return Some(node);
+        }
+        if let Some(found) = find_parent(child, target) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Distinct mid-tone colours so neighbouring rectangles stay separable.
+fn palette(index: usize) -> egui::Color32 {
+    const COLORS: [egui::Color32; 12] = [
+        egui::Color32::from_rgb(66, 133, 244),
+        egui::Color32::from_rgb(219, 68, 55),
+        egui::Color32::from_rgb(244, 180, 0),
+        egui::Color32::from_rgb(15, 157, 88),
+        egui::Color32::from_rgb(171, 71, 188),
+        egui::Color32::from_rgb(0, 172, 193),
+        egui::Color32::from_rgb(255, 112, 67),
+        egui::Color32::from_rgb(121, 85, 72),
+        egui::Color32::from_rgb(92, 107, 192),
+        egui::Color32::from_rgb(175, 180, 43),
+        egui::Color32::from_rgb(38, 166, 154),
+        egui::Color32::from_rgb(230, 81, 0),
+    ];
+    COLORS[index % COLORS.len()]
 }
