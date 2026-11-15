@@ -49,7 +49,9 @@ pub fn percent(part: u64, whole: u64) -> f32 {
 }
 
 pub fn env_dir(key: &str) -> Option<PathBuf> {
-    std::env::var_os(key).filter(|v| !v.is_empty()).map(PathBuf::from)
+    std::env::var_os(key)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Every drive letter that currently has a readable volume attached.
@@ -73,7 +75,13 @@ pub fn quarantine_root() -> PathBuf {
 pub fn sanitize(input: &str) -> String {
     let mut out: String = input
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if out.len() > 80 {
         out.truncate(80);

@@ -184,11 +184,7 @@ impl WinPurge {
         thread::spawn(move || {
             let tx_progress = tx.clone();
             let outcome = engine::apply(&plan, &quarantine_root, move |done, total, label| {
-                let _ = tx_progress.send(Msg::CleanProgress {
-                    done,
-                    total,
-                    label,
-                });
+                let _ = tx_progress.send(Msg::CleanProgress { done, total, label });
             });
             let _ = tx.send(Msg::CleanDone(outcome));
         });
@@ -220,11 +216,7 @@ impl WinPurge {
                 }
                 self.statuses = done.statuses;
             }
-            Msg::CleanProgress {
-                done,
-                total,
-                label,
-            } => {
+            Msg::CleanProgress { done, total, label } => {
                 self.clean_done = done;
                 self.clean_total = total;
                 self.clean_label = label;
@@ -334,11 +326,14 @@ impl WinPurge {
                         self.start_scan();
                     }
                 });
-                ui.add_enabled_ui(!self.cleaning && !self.scanning && self.confirm.is_none(), |ui| {
-                    if ui.button("Clean selected").clicked() {
-                        self.request_clean();
-                    }
-                });
+                ui.add_enabled_ui(
+                    !self.cleaning && !self.scanning && self.confirm.is_none(),
+                    |ui| {
+                        if ui.button("Clean selected").clicked() {
+                            self.request_clean();
+                        }
+                    },
+                );
                 ui.add_enabled_ui(!self.cleaning && !self.scanning, |ui| {
                     if ui.button("Re-scan sizes").clicked() {
                         self.statuses = statuses_for(&self.rules);
@@ -362,9 +357,7 @@ impl WinPurge {
                 ui.label(
                     RichText::new(format!(
                         "{}/{}  {}",
-                        self.clean_done,
-                        self.clean_total,
-                        self.clean_label
+                        self.clean_done, self.clean_total, self.clean_label
                     ))
                     .small(),
                 );
@@ -423,11 +416,7 @@ impl WinPurge {
                             ui.horizontal(|ui| {
                                 ui.add_space(10.0);
                                 ui.vertical(|ui| {
-                                    ui.label(
-                                        RichText::new(rule.description)
-                                            .small()
-                                            .weak(),
-                                    );
+                                    ui.label(RichText::new(rule.description).small().weak());
                                     if blocked {
                                         ui.colored_label(
                                             egui::Color32::YELLOW,
@@ -507,9 +496,7 @@ impl WinPurge {
                                 RichText::new(format!(
                                     "{}  ({}, {} of drive)",
                                     selected.display(),
-                                    human_size(
-                                        find_size(tree, selected).unwrap_or(0)
-                                    ),
+                                    human_size(find_size(tree, selected).unwrap_or(0)),
                                     format!(
                                         "{:.1}%",
                                         percent(
@@ -530,14 +517,7 @@ impl WinPurge {
                     let mut expanded = std::mem::take(&mut self.expanded);
                     ScrollArea::vertical().show(ui, |ui| {
                         for child in &tree.children {
-                            show_node(
-                                ui,
-                                child,
-                                0,
-                                tree.size,
-                                &mut selected_mut,
-                                &mut expanded,
-                            );
+                            show_node(ui, child, 0, tree.size, &mut selected_mut, &mut expanded);
                         }
                     });
                     self.expanded = expanded;
@@ -690,11 +670,7 @@ fn show_node(
 fn enumerate_drives() -> Vec<DriveInfo> {
     let mut out = Vec::new();
     for path in util::drives() {
-        let letter = path
-            .to_string_lossy()
-            .chars()
-            .next()
-            .unwrap_or('?');
+        let letter = path.to_string_lossy().chars().next().unwrap_or('?');
         let (total, free) = drive_space(&path)
             .map(|space| (space.total, space.free))
             .unwrap_or((0, 0));

@@ -14,9 +14,7 @@ pub fn dir_size(path: &Path) -> Option<(u64, u32)> {
     }
     let walker = walkdir::WalkDir::new(path)
         .follow_links(false)
-        .filter_entry(|entry| {
-            !(entry.file_type().is_dir() && is_reparse_point(&entry.path()))
-        });
+        .filter_entry(|entry| !(entry.file_type().is_dir() && is_reparse_point(&entry.path())));
 
     let mut total = 0u64;
     let mut files = 0u32;
@@ -37,11 +35,7 @@ pub fn dir_size(path: &Path) -> Option<(u64, u32)> {
 /// Only directories become child nodes. Loose files directly inside a
 /// directory are collapsed into a single synthetic node so a large volume does
 /// not produce millions of GUI rows.
-pub fn scan_tree(
-    root: &Path,
-    max_depth: usize,
-    mut on_progress: impl FnMut(u32),
-) -> Node {
+pub fn scan_tree(root: &Path, max_depth: usize, mut on_progress: impl FnMut(u32)) -> Node {
     let mut counted = 0u32;
     build_dir(root, 0, max_depth, &mut counted, &mut on_progress)
 }
@@ -103,7 +97,13 @@ fn build_dir(
             if is_reparse_point(&child_path) {
                 continue;
             }
-            subdirs.push(build_dir(&child_path, depth + 1, max_depth, counted, on_progress));
+            subdirs.push(build_dir(
+                &child_path,
+                depth + 1,
+                max_depth,
+                counted,
+                on_progress,
+            ));
         } else if let Ok(md) = entry.metadata() {
             loose_size += md.len();
             loose_files = loose_files.saturating_add(1);

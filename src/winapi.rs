@@ -89,16 +89,16 @@ pub fn drive_space(path: &Path) -> Option<Space> {
     unsafe {
         use std::os::windows::ffi::OsStrExt;
 
-        let mut wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let mut wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         let mut available = 0u64;
         let mut total = 0u64;
         let mut _free = 0u64;
-        let ok = sys::GetDiskFreeSpaceExW(
-            wide.as_mut_ptr(),
-            &mut available,
-            &mut total,
-            &mut _free,
-        );
+        let ok =
+            sys::GetDiskFreeSpaceExW(wide.as_mut_ptr(), &mut available, &mut total, &mut _free);
         if ok == 0 {
             return None;
         }

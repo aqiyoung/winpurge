@@ -111,9 +111,10 @@ pub fn apply(
     let id = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let batch_dir = quarantine_root.join(&id);
     if let Err(error) = fs::create_dir_all(&batch_dir) {
-        outcome
-            .failed
-            .push((batch_dir.clone(), format!("cannot create quarantine: {error}")));
+        outcome.failed.push((
+            batch_dir.clone(),
+            format!("cannot create quarantine: {error}"),
+        ));
         return outcome;
     }
 
@@ -136,7 +137,11 @@ pub fn apply(
             continue;
         }
 
-        let key = format!("{}-{}", item.rule_id, sanitize(&item.path.to_string_lossy()));
+        let key = format!(
+            "{}-{}",
+            item.rule_id,
+            sanitize(&item.path.to_string_lossy())
+        );
         let destination = unique_destination(&batch_dir, &key);
 
         match move_path(&item.path, &destination) {
@@ -148,9 +153,7 @@ pub fn apply(
                 outcome.moved += 1;
                 outcome.freed += item.size;
             }
-            Err(error) => outcome
-                .failed
-                .push((item.path.clone(), error.to_string())),
+            Err(error) => outcome.failed.push((item.path.clone(), error.to_string())),
         }
     }
 
@@ -322,7 +325,10 @@ mod tests {
 
         let plan = build_plan(&rules, &["thumbs".to_string()]);
         assert_eq!(plan.items.len(), 1);
-        assert_eq!(plan.items[0].path, base.join("thumbdir").join("thumbcache_96.db"));
+        assert_eq!(
+            plan.items[0].path,
+            base.join("thumbdir").join("thumbcache_96.db")
+        );
         assert!(!plan.items.iter().any(|i| i.path.ends_with("keep.txt")));
         assert!(!plan.items.iter().any(|i| i.path.ends_with("temp")));
 

@@ -18,8 +18,10 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "WinPurge",
         options,
-        Box::new(|cc| -> Result<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>> {
-            Ok(Box::new(app::WinPurge::new(cc)))
-        }),
+        Box::new(
+            |cc| -> Result<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>> {
+                Ok(Box::new(app::WinPurge::new(cc)))
+            },
+        ),
     )
 }
