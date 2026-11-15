@@ -762,7 +762,7 @@ fn statuses_for(rules: &[Rule]) -> Vec<RuleStatus> {
 }
 
 fn count_dirs(node: &Node) -> u32 {
-    let mut count = if node.is_dir() { 1 } else { 0 };
+    let mut count: u32 = if node.is_dir() { 1 } else { 0 };
     for child in &node.children {
         count = count.saturating_add(count_dirs(child));
     }
