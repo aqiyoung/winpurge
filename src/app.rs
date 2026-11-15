@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
@@ -647,7 +647,10 @@ impl WinPurge {
 
                 let painter = ui.painter();
                 for (index, b) in boxes.iter().enumerate() {
-                    let r = egui::Rect::new(egui::Pos2::new(b.x, b.y), egui::Vec2::new(b.w, b.h));
+                    let r = egui::Rect::from_min_size(
+                        egui::Pos2::new(b.x, b.y),
+                        egui::Vec2::new(b.w, b.h),
+                    );
                     painter.rect_filled(r, CornerRadius::ZERO, palette(index));
 
                     let response = ui.interact(
