@@ -322,7 +322,7 @@ mod tests {
                 needs_admin: false,
                 kind: RuleKind::Files {
                     dirs: vec![base.join("thumbdir")],
-                    pred: FilePred::new(Some("thumbcache_"), Some(".db")),
+                    pred: FilePred::new(Some("thumbcache_"), &[".db"]),
                 },
             },
         ];

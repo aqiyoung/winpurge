@@ -169,7 +169,7 @@ mod tests {
         let big = boxes[0].area();
         let small = boxes[1].area();
         // 9:1 by bytes; the treemap may round, but the ratio must stay obvious.
-        assert!(big > small * 4, "big={big} small={small}");
+        assert!(big > small * 4.0, "big={big} small={small}");
         assert!((big + small - bounds.area()).abs() < 1.0);
     }
 
