@@ -4,29 +4,45 @@ use std::path::{Path, PathBuf};
 use crate::model::{Node, NodeKind};
 use crate::util::is_reparse_point;
 
-/// Recursive size of a directory: (total bytes, file count).
+/// Depth-first walk that never follows reparse points.
 ///
-/// Reparse points (junctions, symlinks, OneDrive placeholders) are never
-/// traversed, so space is never counted twice and cycles cannot happen.
+/// Implemented by hand rather than pulling in a walker crate: on Windows the
+/// important rule is "do not descend into junctions or symlinks", and doing it
+/// explicitly keeps that rule obvious and auditable.
+fn walk<F: FnMut(&Path, u64)>(root: &Path, on_file: &mut F) {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                if is_reparse_point(&path) {
+                    continue;
+                }
+                stack.push(path);
+            } else if let Ok(metadata) = entry.metadata() {
+                on_file(&path, metadata.len());
+            }
+        }
+    }
+}
+
+/// Recursive size of a directory: (total bytes, file count).
 pub fn dir_size(path: &Path) -> Option<(u64, u32)> {
     if !path.is_dir() {
         return None;
     }
-    let walker = walkdir::WalkDir::new(path)
-        .follow_links(false)
-        .filter_entry(|entry| !(entry.file_type().is_dir() && is_reparse_point(&entry.path())));
-
     let mut total = 0u64;
     let mut files = 0u32;
-    for entry in walker.flatten() {
-        if entry.file_type().is_dir() {
-            continue;
-        }
-        if let Ok(md) = entry.metadata() {
-            total += md.len();
-            files = files.saturating_add(1);
-        }
-    }
+    walk(path, &mut |_path, len| {
+        total += len;
+        files = files.saturating_add(1);
+    });
     Some((total, files))
 }
 
@@ -82,9 +98,9 @@ fn build_dir(
     let mut loose_files = 0u32;
 
     for entry in entries.flatten() {
-        counted = counted.saturating_add(1);
-        if counted % 4096 == 0 {
-            on_progress(counted);
+        *counted = counted.saturating_add(1);
+        if *counted % 4096 == 0 {
+            on_progress(*counted);
         }
 
         let child_path = entry.path();
@@ -104,8 +120,8 @@ fn build_dir(
                 counted,
                 on_progress,
             ));
-        } else if let Ok(md) = entry.metadata() {
-            loose_size += md.len();
+        } else if let Ok(metadata) = entry.metadata() {
+            loose_size += metadata.len();
             loose_files = loose_files.saturating_add(1);
         }
     }
@@ -150,8 +166,8 @@ pub fn total_size(paths: &[PathBuf]) -> (u64, u32) {
                 bytes += b;
                 files = files.saturating_add(f);
             }
-        } else if let Ok(md) = fs::metadata(path) {
-            bytes += md.len();
+        } else if let Ok(metadata) = fs::metadata(path) {
+            bytes += metadata.len();
             files = files.saturating_add(1);
         }
     }
@@ -171,9 +187,9 @@ pub fn matching_files_size(dirs: &[PathBuf], pred: &crate::rules::FilePred) -> (
             if !pred.matches(&name) {
                 continue;
             }
-            if let Ok(md) = entry.metadata() {
-                if md.is_file() {
-                    bytes += md.len();
+            if let Ok(metadata) = entry.metadata() {
+                if metadata.is_file() {
+                    bytes += metadata.len();
                     files = files.saturating_add(1);
                 }
             }

@@ -13,8 +13,23 @@ use crate::scan;
 use crate::util::{self, human_size, percent};
 use crate::winapi::{drive_space, is_elevated};
 
+/// A button press collected inside a panel closure and executed afterwards.
+///
+/// Panels take `&mut Ui` and run their contents in a closure, which makes
+/// calling `&mut self` methods from a nested closure awkward. Collecting the
+/// intent and acting on it outside keeps the borrows simple.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Action {
+    None,
+    RefreshDrives,
+    Scan,
+    CleanSelected,
+    RescanSizes,
+}
+
 pub enum Msg {
     ScanProgress(u32),
+    ScanDone(ScanDone),
     ScanDone(ScanDone),
     CleanProgress {
         done: usize,
@@ -265,289 +280,332 @@ impl WinPurge {
         self.rx = Some(rx);
     }
 
-    fn top_panel(&mut self, ctx: &Context) {
-        egui::TopBottomPanel::top("top").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("WinPurge");
-                ui.separator();
-                if self.admin {
-                    ui.colored_label(egui::Color32::LIGHT_GREEN, "Elevated");
-                } else {
-                    ui.colored_label(
-                        egui::Color32::YELLOW,
-                        "Not elevated - system categories are disabled",
+    fn top_panel(&mut self, ui: &mut egui::Ui) {
+        let action = egui::Panel::top("top")
+            .show(ui, |ui| {
+                let mut action = Action::None;
+                ui.horizontal(|ui| {
+                    ui.heading("WinPurge");
+                    ui.separator();
+                    if self.admin {
+                        ui.colored_label(egui::Color32::LIGHT_GREEN, "Elevated");
+                    } else {
+                        ui.colored_label(
+                            egui::Color32::YELLOW,
+                            "Not elevated - system categories need administrator",
+                        );
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.button("Refresh drives").clicked() {
+                            action = Action::RefreshDrives;
+                        }
+                    });
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Drive");
+                    let drive_label = self
+                        .drives
+                        .get(self.selected_drive)
+                        .map(|d| {
+                            format!(
+                                "{}:  {} free of {}",
+                                d.letter,
+                                human_size(d.free),
+                                human_size(d.total)
+                            )
+                        })
+                        .unwrap_or_else(|| "none".to_string());
+                    egui::ComboBox::from_id_salt("drive-selector")
+                        .selected_text(drive_label.as_str())
+                        .show_ui(ui, |ui| {
+                            for (index, drive) in self.drives.iter().enumerate() {
+                                let label = format!("{}:", drive.letter);
+                                ui.selectable_value(
+                                    &mut self.selected_drive,
+                                    index,
+                                    label.as_str(),
+                                );
+                            }
+                        });
+
+                    ui.label("Depth");
+                    let depth_text = match self.scan_depth {
+                        3 => "3",
+                        5 => "5",
+                        6 => "6",
+                        _ => "4",
+                    };
+                    egui::ComboBox::from_id_salt("depth-selector")
+                        .selected_text(depth_text)
+                        .show_ui(ui, |ui| {
+                            for depth in 3..=6 {
+                                ui.selectable_value(
+                                    &mut self.scan_depth,
+                                    depth,
+                                    depth.to_string().as_str(),
+                                );
+                            }
+                        });
+
+                    ui.separator();
+                    ui.add_enabled_ui(!self.scanning && !self.cleaning, |ui| {
+                        if ui.button("Scan").clicked() {
+                            action = Action::Scan;
+                        }
+                    });
+                    ui.add_enabled_ui(
+                        !self.cleaning && !self.scanning && self.confirm.is_none(),
+                        |ui| {
+                            if ui.button("Clean selected").clicked() {
+                                action = Action::CleanSelected;
+                            }
+                        },
+                    );
+                    ui.add_enabled_ui(!self.cleaning && !self.scanning, |ui| {
+                        if ui.button("Re-scan sizes").clicked() {
+                            action = Action::RescanSizes;
+                        }
+                    });
+
+                    if self.scanning {
+                        ui.spinner();
+                        ui.label(format!("scanned {}+ dirs", self.scanned));
+                    }
+                });
+
+                if self.cleaning {
+                    let fraction = if self.clean_total == 0 {
+                        0.0
+                    } else {
+                        self.clean_done as f32 / self.clean_total as f32
+                    };
+                    ui.add(ProgressBar::new(fraction).show_percentage());
+                    ui.label(
+                        RichText::new(format!(
+                            "{}/{}  {}",
+                            self.clean_done, self.clean_total, self.clean_label
+                        ))
+                        .small(),
                     );
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("Refresh drives").clicked() {
-                        self.drives = enumerate_drives();
-                    }
-                });
-            });
 
-            ui.horizontal(|ui| {
-                ui.label("Drive");
-                let drive_label = self
-                    .drives
-                    .get(self.selected_drive)
-                    .map(|d| {
-                        format!(
-                            "{}:  {} free of {}",
-                            d.letter,
-                            human_size(d.free),
-                            human_size(d.total)
-                        )
-                    })
-                    .unwrap_or_else(|| "none".to_string());
-                egui::ComboBox::from_id_salt("drive-selector")
-                    .selected_text(drive_label)
-                    .show_ui(ui, |ui| {
-                        for (index, drive) in self.drives.iter().enumerate() {
-                            ui.selectable_value(
-                                &mut self.selected_drive,
-                                index,
-                                format!("{}:", drive.letter),
-                            );
-                        }
-                    });
+                action
+            })
+            .inner;
 
-                ui.label("Depth");
-                egui::ComboBox::from_id_salt("depth-selector")
-                    .selected_text(self.scan_depth.to_string())
-                    .show_ui(ui, |ui| {
-                        for depth in 3..=6 {
-                            ui.selectable_value(&mut self.scan_depth, depth, depth.to_string());
-                        }
-                    });
-
-                ui.separator();
-                ui.add_enabled_ui(!self.scanning && !self.cleaning, |ui| {
-                    if ui.button("Scan").clicked() {
-                        self.start_scan();
-                    }
-                });
-                ui.add_enabled_ui(
-                    !self.cleaning && !self.scanning && self.confirm.is_none(),
-                    |ui| {
-                        if ui.button("Clean selected").clicked() {
-                            self.request_clean();
-                        }
-                    },
-                );
-                ui.add_enabled_ui(!self.cleaning && !self.scanning, |ui| {
-                    if ui.button("Re-scan sizes").clicked() {
-                        self.statuses = statuses_for(&self.rules);
-                        self.push_log("Category sizes refreshed.");
-                    }
-                });
-
-                if self.scanning {
-                    ui.spinner();
-                    ui.label(format!("scanned {}+ dirs", self.scanned));
-                }
-            });
-
-            if self.cleaning {
-                let fraction = if self.clean_total == 0 {
-                    0.0
-                } else {
-                    self.clean_done as f32 / self.clean_total as f32
-                };
-                ui.add(ProgressBar::new(fraction).show_percentage());
-                ui.label(
-                    RichText::new(format!(
-                        "{}/{}  {}",
-                        self.clean_done, self.clean_total, self.clean_label
-                    ))
-                    .small(),
-                );
+        match action {
+            Action::None => {}
+            Action::RefreshDrives => self.drives = enumerate_drives(),
+            Action::Scan => self.start_scan(),
+            Action::CleanSelected => self.request_clean(),
+            Action::RescanSizes => {
+                self.statuses = statuses_for(&self.rules);
+                self.push_log("Category sizes refreshed.");
             }
-        });
+        }
     }
 
-    fn rules_panel(&mut self, ctx: &Context) {
-        egui::SidePanel::left("rules")
+    fn rules_panel(&mut self, ui: &mut egui::Ui) {
+        // Snapshot the state the panel needs so the nested closures never
+        // capture `self` while it is already borrowed.
+        let rules = self.rules.clone();
+        let statuses = self.statuses.clone();
+        let admin = self.admin;
+        let busy = self.scanning || self.cleaning;
+        let mut checked = std::mem::take(&mut self.checked);
+
+        let result = egui::Panel::left("rules")
             .resizable(true)
-            .default_width(340.0)
-            .width_range(260.0..=520.0)
-            .show(ctx, |ui| {
+            .default_size(340.0)
+            .min_size(260.0)
+            .max_size(520.0)
+            .show(ui, |ui| {
+                let mut notice: Option<String> = None;
+                let mut restore: Option<String> = None;
+
                 ui.heading("Junk categories");
                 ui.separator();
 
-                let busy = self.scanning || self.cleaning;
-                ui.set_enabled(!busy);
-                ScrollArea::vertical()
-                    .auto_shrink(false)
-                    .max_height(ui.available_height() * 0.55)
-                    .show(ui, |ui| {
-                        for rule in &self.rules {
-                            let status = self
-                                .statuses
-                                .iter()
-                                .find(|s| s.id == rule.id)
-                                .cloned()
-                                .unwrap_or(RuleStatus {
-                                    id: rule.id.to_string(),
-                                    size: 0,
-                                    files: 0,
-                                });
+                ui.add_enabled_ui(!busy, |ui| {
+                    ScrollArea::vertical()
+                        .auto_shrink(false)
+                        .max_height(ui.available_height() * 0.55)
+                        .show(ui, |ui| {
+                            for rule in &rules {
+                                let status = statuses
+                                    .iter()
+                                    .find(|s| s.id == rule.id)
+                                    .cloned()
+                                    .unwrap_or(RuleStatus {
+                                        id: rule.id.to_string(),
+                                        size: 0,
+                                        files: 0,
+                                    });
 
-                            let blocked = rule.needs_admin && !self.admin;
-                            let label = format!(
-                                "{}   {}",
-                                rule.name,
-                                if status.size > 0 {
+                                let blocked = rule.needs_admin && !admin;
+                                let size_text = if status.size > 0 {
                                     human_size(status.size)
                                 } else {
                                     "-".to_string()
-                                }
-                            );
+                                };
+                                let label = format!("{}   {}", rule.name, size_text);
 
-                            ui.set_enabled(!blocked);
-                            let mut on = self.checked.contains(rule.id);
-                            if ui.checkbox(&mut on, label.as_str()).changed() {
-                                if on {
-                                    self.checked.insert(rule.id.to_string());
-                                } else {
-                                    self.checked.remove(rule.id);
-                                }
-                            }
-
-                            ui.horizontal(|ui| {
-                                ui.add_space(10.0);
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new(rule.description).small().weak());
+                                let mut on = checked.contains(rule.id);
+                                if ui.checkbox(&mut on, label.as_str()).changed() {
                                     if blocked {
-                                        ui.colored_label(
-                                            egui::Color32::YELLOW,
-                                            RichText::new("needs administrator").small(),
-                                        );
-                                    } else if status.size > 0 {
-                                        ui.label(
-                                            RichText::new(format!(
-                                                "{} file(s) in scope",
-                                                status.files
-                                            ))
-                                            .small()
-                                            .weak(),
-                                        );
+                                        notice = Some(format!(
+                                            "{} needs administrator - relaunch elevated.",
+                                            rule.name
+                                        ));
+                                    } else if on {
+                                        checked.insert(rule.id.to_string());
+                                    } else {
+                                        checked.remove(rule.id);
                                     }
+                                }
+
+                                ui.horizontal(|ui| {
+                                    ui.add_space(10.0);
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new(rule.description).small().weak());
+                                        if blocked {
+                                            ui.colored_label(
+                                                egui::Color32::YELLOW,
+                                                RichText::new("needs administrator").small(),
+                                            );
+                                        } else if status.size > 0 {
+                                            ui.label(
+                                                RichText::new(format!(
+                                                    "{} file(s) in scope",
+                                                    status.files
+                                                ))
+                                                .small()
+                                                .weak(),
+                                            );
+                                        }
+                                    });
                                 });
-                            });
-                            ui.separator();
-                        }
-                    });
-                ui.set_enabled(true);
+                                ui.separator();
+                            }
+                        });
+                });
 
                 ui.heading("Quarantine");
                 ui.separator();
-                if self.batches.is_empty() {
+                let batches = self.batches.clone();
+                if batches.is_empty() {
                     ui.label(RichText::new("empty").weak());
                 } else {
                     ScrollArea::vertical()
                         .auto_shrink(false)
                         .max_height(ui.available_height())
                         .show(ui, |ui| {
-                            for (id, size) in self.batches.clone() {
+                            for (id, size) in batches {
                                 ui.horizontal(|ui| {
                                     ui.label(id.as_str());
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                         ui.label(format!("{} ", human_size(size)));
                                         if ui.button("Restore").clicked() {
-                                            self.start_rollback(id.clone());
+                                            restore = Some(id.clone());
                                         }
                                     });
                                 });
                             }
                         });
                 }
-            });
+
+                (notice, restore)
+            })
+            .inner;
+
+        self.checked = checked;
+        if let Some(message) = result.0 {
+            self.push_log(message);
+        }
+        if let Some(id) = result.1 {
+            self.start_rollback(id);
+        }
     }
 
-    fn tree_panel(&mut self, ctx: &Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let drive_total = self
-                .drives
-                .get(self.selected_drive)
-                .map(|d| d.total)
-                .unwrap_or(0);
+    fn tree_panel(&mut self, ui: &mut egui::Ui) {
+        let drive_total = self
+            .drives
+            .get(self.selected_drive)
+            .map(|d| d.total)
+            .unwrap_or(0);
 
-            match &self.tree {
-                None => {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(ui.available_height() * 0.3);
-                        ui.heading("No scan yet");
-                        ui.label("Press Scan to analyse the selected drive.");
-                    });
-                }
-                Some(tree) => {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "{}   total {}",
-                                tree.path.display(),
-                                human_size(tree.size)
-                            ))
-                            .strong(),
-                        );
-                        ui.separator();
-                        if let Some(selected) = &self.selected {
-                            ui.label(
-                                RichText::new(format!(
-                                    "{}  ({}, {} of drive)",
-                                    selected.display(),
-                                    human_size(find_size(tree, selected).unwrap_or(0)),
-                                    format!(
-                                        "{:.1}%",
-                                        percent(
-                                            find_size(tree, selected).unwrap_or(0),
-                                            drive_total
-                                        )
-                                    )
-                                ))
-                                .small(),
-                            );
-                        }
-                    });
-                    ui.separator();
+        let tree = self.tree.as_ref();
 
-                    let mut selected_mut = self.selected.clone();
-                    // Taken out of `self` so the scroll closure does not borrow
-                    // the whole app while `tree` still borrows `self.tree`.
-                    let mut expanded = std::mem::take(&mut self.expanded);
-                    ScrollArea::vertical().show(ui, |ui| {
-                        for child in &tree.children {
-                            show_node(ui, child, 0, tree.size, &mut selected_mut, &mut expanded);
-                        }
-                    });
-                    self.expanded = expanded;
-                    if selected_mut != self.selected {
-                        self.selected = selected_mut;
-                    }
+        egui::CentralPanel::default().show(ui, |ui| {
+            let Some(tree) = tree else {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(ui.available_height() * 0.3);
+                    ui.heading("No scan yet");
+                    ui.label("Press Scan to analyse the selected drive.");
+                });
+                return;
+            };
+
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "{}   total {}",
+                        tree.path.display(),
+                        human_size(tree.size)
+                    ))
+                    .strong(),
+                );
+                ui.separator();
+                if let Some(selected) = &self.selected {
+                    let size = find_size(tree, selected).unwrap_or(0);
+                    ui.label(
+                        RichText::new(format!(
+                            "{}  ({}, {:.1}% of drive)",
+                            selected.display(),
+                            human_size(size),
+                            percent(size, drive_total)
+                        ))
+                        .small(),
+                    );
                 }
+            });
+            ui.separator();
+
+            let mut selected_mut = self.selected.clone();
+            // Taken out of `self` so the scroll closure does not borrow the
+            // whole app while `tree` still borrows `self.tree`.
+            let mut expanded = std::mem::take(&mut self.expanded);
+            ScrollArea::vertical().show(ui, |ui| {
+                for child in &tree.children {
+                    show_node(ui, child, 0, tree.size, &mut selected_mut, &mut expanded);
+                }
+            });
+            self.expanded = expanded;
+            if selected_mut != self.selected {
+                self.selected = selected_mut;
             }
         });
     }
 
-    fn log_panel(&mut self, ctx: &Context) {
-        egui::TopBottomPanel::bottom("log")
-            .resizable(false)
-            .default_height(140.0)
-            .show(ctx, |ui| {
-                ui.heading(RichText::new("Log").small());
-                ScrollArea::vertical().show(ui, |ui| {
-                    for line in &self.log {
-                        ui.label(RichText::new(line.as_str()).small().monospace());
-                    }
-                    ui.scroll_to_cursor(Some(Align::BOTTOM));
-                });
+    fn log_panel(&mut self, ui: &mut egui::Ui) {
+        let log = self.log.clone();
+        egui::Panel::bottom("log").show(ui, |ui| {
+            ui.label(RichText::new("Log").small().strong());
+            ScrollArea::vertical().show(ui, |ui| {
+                for line in &log {
+                    ui.label(RichText::new(line.as_str()).small().monospace());
+                }
+                ui.scroll_to_cursor(Some(Align::BOTTOM));
             });
+        });
     }
 
     fn confirm_dialog(&mut self, ctx: &Context) {
         let Some(plan) = self.confirm.clone() else {
             return;
         };
+        let busy = self.cleaning;
         egui::Window::new("Confirm cleanup")
             .collapsible(false)
             .resizable(false)
@@ -560,36 +618,37 @@ impl WinPurge {
                 ));
                 ui.label(
                     RichText::new(
-                        "Files are moved, not deleted. You can restore them from the Quarantine panel.",
+                        "Files are moved, not deleted. Restore them from the Quarantine panel.",
                     )
                     .small()
                     .weak(),
                 );
                 ui.separator();
-                ScrollArea::vertical()
-                    .max_height(220.0)
-                    .show(ui, |ui| {
-                        for item in &plan.items {
-                            ui.label(
-                                RichText::new(format!(
-                                    "{}  {}",
-                                    item.path.display(),
-                                    human_size(item.size)
-                                ))
-                                .small()
-                                .monospace(),
-                            );
-                        }
-                    });
+                ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    for item in &plan.items {
+                        ui.label(
+                            RichText::new(format!(
+                                "{}  {}",
+                                item.path.display(),
+                                human_size(item.size)
+                            ))
+                            .small()
+                            .monospace(),
+                        );
+                    }
+                });
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!self.cleaning, |ui| {
+                    ui.add_enabled_ui(!busy, |ui| {
                         if ui.button("Cancel").clicked() {
                             self.confirm = None;
                         }
                     });
-                    ui.add_enabled_ui(!self.cleaning, |ui| {
-                        if ui.button(RichText::new("Move to quarantine").strong()).clicked() {
+                    ui.add_enabled_ui(!busy, |ui| {
+                        if ui
+                            .button(RichText::new("Move to quarantine").strong())
+                            .clicked()
+                        {
                             self.start_clean();
                         }
                     });
@@ -599,13 +658,17 @@ impl WinPurge {
 }
 
 impl eframe::App for WinPurge {
-    fn update(&mut self, ctx: &Context, _frame: &eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.drain_messages();
-        self.top_panel(ctx);
-        self.rules_panel(ctx);
-        self.tree_panel(ctx);
-        self.log_panel(ctx);
-        self.confirm_dialog(ctx);
+        if self.scanning || self.cleaning {
+            ui.ctx().request_repaint();
+        }
+        let ctx = ui.ctx().clone();
+        self.top_panel(ui);
+        self.rules_panel(ui);
+        self.log_panel(ui);
+        self.tree_panel(ui);
+        self.confirm_dialog(&ctx);
     }
 }
 
@@ -639,13 +702,11 @@ fn show_node(
         let is_selected = selected.as_deref() == Some(node.path.as_path());
         let name = match node.kind {
             NodeKind::Directory => node.name.clone(),
-            NodeKind::LooseFiles(count) => {
-                format!("{} loose file(s)", count)
-            }
+            NodeKind::LooseFiles(count) => format!("{count} loose files"),
             NodeKind::Inaccessible => format!("{} (inaccessible)", node.name),
         };
 
-        if ui.selectable_label(is_selected, name).clicked() && is_dir {
+        if ui.selectable_label(is_selected, name.as_str()).clicked() && is_dir {
             *selected = Some(node.path.clone());
             expanded.insert(node.path.clone());
         }
