@@ -66,8 +66,12 @@ Builds happen in GitHub Actions on `windows-latest` (`cargo fmt --check`,
 `cargo build --release`, `cargo test --release`, then WiX for the `.msi`).
 There is intentionally no local build step.
 
-To build the installer locally you would need the [WiX Toolset v4](https://wixtoolset.org/)
-(`dotnet tool install --global wix`) and a Rust stable toolchain.
+The installer is built with WiX **v6**, pinned in `.github/workflows/ci.yml`.
+WiX v7 introduced an Open Source Maintenance Fee EULA, so the workflow stays on
+the open-source (LGPL) release.
+
+Artifacts of every run (`winpurge.exe` and `winpurge.msi`) are attached to the
+run under **Actions → CI → Artifacts**.
 
 ## Development
 
@@ -77,7 +81,7 @@ cargo test         # engine + rule unit tests
 ```
 
 The unit tests cover the parts that matter for safety: path predicates,
-critical-path refusal, and a full move-to-quarantine / restore round trip.
+critical-path refusal, quarantine round trips, and per-test fixture isolation.
 
 ## Disclaimer
 

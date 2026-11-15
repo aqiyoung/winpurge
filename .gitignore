@@ -6,3 +6,4 @@ Cargo.lock
 *.wixobj
 *.wixpdb
 .vscode/
+/installer/winpurge.exe
