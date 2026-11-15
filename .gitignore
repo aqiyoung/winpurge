@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+Cargo.lock
+/dist
+*.msi
+*.wixobj
+*.wixpdb
+.vscode/

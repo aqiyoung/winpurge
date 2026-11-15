@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Test
+        run: cargo test --release
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: winpurge.exe
+          path: target/release/winpurge.exe
+          if-no-files-found: error
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix
+          Copy-Item target\release\winpurge.exe installer\winpurge.exe
+          wix build installer\winpurge.wxs -o winpurge-ci.msi
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: winpurge.msi
+          path: winpurge-ci.msi
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: winpurge.msi
+      - name: Attach installer to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: winpurge-ci.msi

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WiX v4 definition for the WinPurge installer.
+
+  Installs per-machine into Program Files\WinPurge and adds a Start Menu
+  shortcut. Upgrades are handled through the fixed UpgradeCode below.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="WinPurge"
+           Version="0.1.0"
+           Manufacturer="WinPurge Contributors"
+           UpgradeCode="7F3A2C1E-1B2D-4E5F-9A6B-3C4D5E6F7A8B"
+           Scope="perMachine"
+           Compressed="yes"
+           InstallerVersion="200">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of WinPurge is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="WinPurge">
+        <Component Id="MainExecutable" Guid="*">
+          <File Id="WinPurgeExe" Source="winpurge.exe" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppShortcutFolder" Name="WinPurge">
+        <Component Id="StartMenuShortcut" Guid="*">
+          <Shortcut Id="WinPurgeShortcut"
+                    Name="WinPurge"
+                    Description="Analyse disk usage and clean junk files safely"
+                    Target="[INSTALLFOLDER]winpurge.exe"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="RemoveAppShortcutFolder" On="uninstall" />
+          <RegistryValue Root="HKCU"
+                         Key="Software\WinPurge"
+                         Name="Installed"
+                         Type="integer"
+                         Value="1"
+                         KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="WinPurge" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>
