@@ -30,7 +30,6 @@ enum Action {
 pub enum Msg {
     ScanProgress(u32),
     ScanDone(ScanDone),
-    ScanDone(ScanDone),
     CleanProgress {
         done: usize,
         total: usize,
