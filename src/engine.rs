@@ -287,8 +287,12 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
 
-    fn fixture() -> PathBuf {
-        let base = std::env::temp_dir().join(format!("winpurge-engine-{}", std::process::id()));
+    fn fixture(tag: &str) -> PathBuf {
+        // Each test gets its own directory: `cargo test` runs tests in
+        // parallel, and a shared path would let one test delete another's
+        // fixture mid-run.
+        let base =
+            std::env::temp_dir().join(format!("winpurge-engine-{}-{tag}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("temp")).unwrap();
         fs::create_dir_all(base.join("thumbdir")).unwrap();
@@ -302,7 +306,7 @@ mod tests {
 
     #[test]
     fn plan_only_contains_whitelisted_targets() {
-        let base = fixture();
+        let base = fixture("plan");
         let rules = vec![
             Rule {
                 id: "temp",
@@ -337,7 +341,7 @@ mod tests {
 
     #[test]
     fn apply_then_rollback_round_trips() {
-        let base = fixture();
+        let base = fixture("roundtrip");
         let quarantine = base.join("quarantine");
         let rules = vec![Rule {
             id: "temp",
@@ -351,7 +355,11 @@ mod tests {
         assert_eq!(plan.total, 4096);
 
         let outcome = apply(&plan, &quarantine, |_, _, _| {});
-        assert_eq!(outcome.moved, 1);
+        assert_eq!(
+            outcome.moved, 1,
+            "skipped={:?} failed={:?}",
+            outcome.skipped, outcome.failed
+        );
         assert_eq!(outcome.freed, 4096);
         assert!(outcome.failed.is_empty());
         assert!(!base.join("temp").exists(), "source moved away");
