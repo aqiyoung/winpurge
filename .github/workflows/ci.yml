@@ -90,6 +90,20 @@ jobs:
       - name: Attach binaries to the release
         uses: softprops/action-gh-release@v2
         with:
+          body: |
+            **WinPurge** — see what is eating your Windows drive, and clean it
+            without breaking Windows.
+
+            - Space-usage treemap and tree views (drive, directory depth selectable)
+            - Whitelist-only junk cleaning into a restorable quarantine
+            - Browser crash reports, Sogou IME logs, Windows/browser caches, Windows.old
+
+            Binaries are signed with a **self-signed** certificate: they prove the
+            download was not tampered with, but Windows SmartScreen will still warn
+            until the tool builds up reputation (or you sign with a purchased
+            OV/EV certificate).
+
+            Install with the `.msi`, or run the portable `.exe` directly.
           files: |
             dist/winpurge.exe
             dist/winpurge-${{ github.ref_name }}.msi
