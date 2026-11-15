@@ -40,7 +40,9 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          dotnet tool install --global wix
+          # WiX v7 introduced an Open Source Maintenance Fee EULA. Stay on v6,
+          # which is still the open-source (LGPL) release.
+          dotnet tool install --global wix --version 6.0.2
           Copy-Item target\release\winpurge.exe installer\winpurge.exe
           wix build installer\winpurge.wxs -o winpurge-ci.msi
 
